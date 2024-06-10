@@ -142,3 +142,91 @@ figure;
 histogram(distCh_tmp)   
 xlabel('SD distance [mm]')
 ylabel('N of channels')
+
+%% PREPROCESSING
+% a. Conversion to optical density changes
+
+meanValue = mean(d);
+dodConv = -log(abs(d)./meanValue);
+
+% b. Motion correction
+
+% CHOOSE THE BEST MOTION CORRECTION TECHNIQUE (5)
+% Number of channels available
+nCh = size(SD.MeasList,1)/2;
+
+% Plot intensity data at first wavelength to have a look at artifacts
+figure;
+plot(t,d(:,1:nCh))
+xlabel('Time [s]')
+ylabel('Intensity [A.U.]')
+xlim([t(1) t(end)])
+title('Wavelength 1')
+
+%% Wavelet motion correction--> there are artifacts but without changes of the baseline
+SD.MeasListAct = remCh;
+iqr = 0.5;
+% Run wavelet motion correction
+dodWavelet = hmrMotionCorrectWavelet(dodConv,SD,iqr);
+
+% Plot original optical density data at first wavelength considering only good channels
+dodConvGood = dodConv(:,remCh==1);
+figure;
+plot(t,dodConvGood(:,1:end/2)) % just plot first wavelength channels
+xlabel('Time [s]')
+ylabel('Optical density [A.U.]')
+xlim([t(1) t(end)]) % This can be used so that the figure will display exactly these time points and not leave white empty spaces between axis and start/end of the signal
+title('Wavelength 1')
+
+% Plot wavelet corrected optical density data at first wavelength considering only good channels
+dodWavGood = dodWavelet(:,remCh==1);
+figure;
+plot(t,dodWavGood(:,1:end/2))
+xlabel('Time [s]')
+ylabel('Optical density corrected [A.U.]')
+xlim([t(1) t(end)])
+title('Wavelength 1')
+
+% Compare uncorrected vs. wavelet corrected data at each good channel
+for iCh = 1:nCh
+    if remCh(iCh) == 1 % Plot only if it is a good channel
+        figure;
+        plot(t,dodConv(:,iCh))
+        hold on;
+        plot(t,dodWavelet(:,iCh))
+        title(num2str(iCh))
+        legend('dod','dod Wavelet corrected')
+        xlim([t(1) t(end)])
+        pause
+        close
+    end
+end
+%% c. Band-pass filtering with cut-off frequency 0.01 and 0.5 Hz-->noise
+% removal
+
+lowerCutOff = 0.01;
+higherCutOff = 0.5;
+fs = 1/(t(2)-t(1)); % compute sampling frequency
+dodFilt = hmrBandpassFilt(dodWavelet,fs,lowerCutOff,higherCutOff);
+
+% Plot filtered optical density data at one selected good channel (here channel 1)
+dodFiltGood = dodFilt(:,remCh==1);
+figure;
+plot(t,dodWavGood(:,1))
+hold on;
+plot(t,dodFiltGood(:,1))
+xlabel('Time [s]')
+ylabel('Optical density [A.U.]')
+xlim([t(1) t(end)])
+title('Wavelength 1')
+legend('original','band-pass filtered')
+
+%% d. Computation of the average optical density hemodynamic response for each channel
+%and condition in a time range of -2 to 36 seconds from stimulus onset with the block
+%average approach
+
+
+tRange = [-2 36]; % range of timimg around stimulus to define a trial
+tHRF = tRange(1):1/fs:tRange(2); % time vector for the hemodynamic response (and trials)
+
+dcAvg = zeros(length(tHRF),size(dc,2),size(dc,3),size(s,2));
