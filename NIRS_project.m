@@ -230,3 +230,292 @@ tRange = [-2 36]; % range of timimg around stimulus to define a trial
 tHRF = tRange(1):1/fs:tRange(2); % time vector for the hemodynamic response (and trials)
 
 dcAvg = zeros(length(tHRF),size(dc,2),size(dc,3),size(s,2));
+%% Test all motion correction approaches on the data and establish whether your choice based on 
+% theory (the one at point 5) did provide good qualitative results.
+%% Spline motion correction
+% Detect motion artifacts in signal
+tMotion = 0.5;
+tMask = 2; 
+SDThresh = 12; 
+AmpThresh = 0.5; 
+
+tIncMan = ones(length(t),1); % set it to vectors of ones (this is a vector used to remove manually parts of the data if needed)
+% Motion detection technique. tIncCh is a matrix number of samples x twice n of
+% channels which contains for each channel (column) the information about
+% whether an artifact was present (0s) or not (1s). tInc is a vector which
+% contains information on whether at that time sample in any of the channel
+% was present an artifact (0s) or not (1s). tInc can therefore be obtained
+% from tIncCh by setting to 0 every row that contains at least one 0. 
+[tInc,tIncCh] = hmrMotionArtifactByChannel(dodConv, fs, SD, tIncMan, tMotion, tMask, SDThresh, AmpThresh);
+
+% Visualize detected motion artifacts in good channels at first wavelength
+dodConvGood = dodConv(:,remCh==1);
+figure;
+plot(t,dodConvGood(:,1:end/2))
+hold on;
+for i = 1:length(tInc) % here we use tInc since we are displaying all channels and we want to see all time points that have been detected as motion in at least one channel
+    if tInc(i) == 0 % For each sample identified as motion artifact
+        lh = plot([t(i) t(i)],[-0.5 0.2],'r','LineWidth',0.5); % Plot vertical red line
+        lh.Color = [lh.Color 0.05]; % the first three entries define color, the fourth one transparency
+    end
+end
+title('First Wavelength')
+xlim([t(1) t(end)])
+xlabel('Time [s]')
+ylabel('\DeltaOD [A.U.]')
+
+% Spline interpolation
+p = 0.99;
+dodSpline = hmrMotionCorrectSpline(dodConv,t,SD,tIncCh,p);
+
+% Plot original optical density data in all good channels of first wavelength
+figure;
+plot(t,dodConvGood(:,1:end/2))
+xlabel('Time [s]')
+ylabel('Optical density [A.U.]')
+xlim([t(1) t(end)])
+title('Wavelength 1')
+
+% Plot spline corrected optical density data in all good channels of first wavelength
+dodSplineGood = dodSpline(remCh == 1);
+figure;
+plot(t,dodSpline(:,1:end/2))
+xlabel('Time [s]')
+ylabel('Optical density corrected [A.U.]')
+xlim([t(1) t(end)])
+title('Wavelength 1')
+
+% Compare uncorrected vs. spline corrected data at each good channel with
+% superimposed vertical lines for where artifacts were detected
+for iCh = 1:nCh
+    if remCh(iCh) == 1 % display only good channels
+        figure;
+        plot(t,dodConv(:,iCh))
+        hold on;
+        plot(t,dodSpline(:,iCh))
+        title(num2str(iCh))
+        %legend('dod','dod Spline corrected')
+        xlim([t(1) t(end)])
+        hold on;
+        for i = 1:size(tIncCh,1) 
+            if tIncCh(i,iCh) == 0 % here we use tIncCh since we are displaying channels one at a time and we are interested in evaluating whether spline was able to correct the artifacts detected specifically in each single channel
+                lh = plot([t(i) t(i)],[-0.5 0.2],'r','LineWidth',0.5);
+                lh.Color = [lh.Color 0.05]; % the first three entries define color, the fourth one transparency
+            end
+        end
+        pause
+        close
+    end
+end
+
+%% tPCA motion correction
+varThresh = 0.97; % % of variance to remove
+nIter = 5; % n of iterations
+
+% Looking at the help of the function, we know that one of the outputs
+% (tIncPCAbefore) contains information about detected motion artifacts
+% before applying the PCA
+[dodPCA,tIncPCAafter,svs,nSV,tIncPCAbefore] = hmrMotionCorrectPCArecurse(dodConv,fs,SD,tIncMan,tMotion,tMask,SDThresh,AmpThresh,varThresh,nIter);
+
+% Plot original optical density data in all good channels of first wavelength
+figure;
+plot(t,dodConvGood(:,1:end/2))
+xlabel('Time [s]')
+ylabel('Optical density [A.U.]')
+xlim([t(1) t(end)])
+title('Wavelength 1')
+
+% Plot tPCA corrected optical density data in all good channels of first wavelength
+dodPCAGood = dodPCA(:,remCh == 1);
+figure;
+plot(t,dodPCAGood(:,1:end/2))
+xlabel('Time [s]')
+ylabel('Optical density corrected [A.U.]')
+xlim([t(1) t(end)])
+title('Wavelength 1')
+
+% Compare uncorrected vs. tPCA corrected data at each good channel with
+% superimposed vertical lines for where artifacts were detected
+for iCh = 1:nCh
+    if remCh(iCh) == 1 % only good channels
+        figure;
+        plot(t,dodConv(:,iCh))
+        hold on;
+        plot(t,dodPCA(:,iCh))
+        title(num2str(iCh))
+        %legend('dod','dod tPCA corrected')
+        xlim([t(1) t(end)])
+        hold on;
+        for i = 1:length(tIncPCAbefore) % here we use tIncPCAbefore since we are displaying all channels and we want to know on which segments of contaminated data tPCA worked on (remember that tPCA is a multi-channel approach working on all channels)
+            if tIncPCAbefore(i) == 0
+                lh = plot([t(i) t(i)],[-0.5 0.2],'r','LineWidth',0.5);
+                lh.Color = [lh.Color 0.05]; % the first three entries define color, the fourth one transparency
+            end
+        end
+        pause
+        close
+    end
+end
+
+%% Comparison between approaches
+for iCh = 1:nCh
+    if remCh(iCh) == 1 % display only good channels 
+        figure;
+        plot(t,dodConv(:,iCh))
+        hold on;
+        plot(t,dodSpline(:,iCh))
+        plot(t,dodWavelet(:,iCh))
+        plot(t,dodPCA(:,iCh))
+        title(num2str(iCh))
+        xlim([t(1) t(end)])
+        hold on;
+        for i = 1:length(tInc) 
+            if tIncCh(i,iCh) == 0 % Display artifacts identified in each channel so that it is easier to evaluate the differences among approaches by looking at specific segments of data
+                lh = plot([t(i) t(i)],[-0.5 0.2],'r','LineWidth',0.5);
+                lh.Color = [lh.Color 0.05]; % the first three entries define color, the fourth one transparency
+            end
+        end
+        legend('dod','dod Spline','dod Wavelet','dod PCA')
+        pause
+        close
+    end
+end
+
+
+%% Part 7
+% Load Jacobian
+
+
+load('CCW.jac','-mat')
+HeadVolumeMesh.node(:,4) = (sum(J{1}.vol));
+% Display whole array sensitivity on GM volume mesh
+figure;
+plotmesh(HeadVolumeMesh.node,HeadVolumeMesh.elem(HeadVolumeMesh.elem(:,5)==4,1:4))
+caxis([-3 0])
+
+% Remove bad channels from Jacobian
+for i = 1:length(SD.Lambda) % for the first wavelength only
+    tmp = J{1}.vol;
+    JCropped{i} = tmp(SD.MeasListAct(SD.MeasList(:,4)==i)==1,:);
+end
+
+HeadVolumeMesh.node(:,4) = (sum(JCropped{1}));
+% Display whole array sensitivity on GM volume mesh with only good channels
+figure;
+plotmesh(HeadVolumeMesh.node,HeadVolumeMesh.elem(HeadVolumeMesh.elem(:,5)==4,1:4))
+caxis([-3 0])
+
+
+%% 8
+% Compute inverse of Jacobian
+lambda1 = 0.1;
+invJ = cell(length(SD.Lambda),1);
+for i = 1:length(SD.Lambda) %for each Jacobian
+    Jtmp = JCropped{i};
+    JJT = Jtmp*Jtmp';
+    S=svd(JJT);
+    invJ{i} = Jtmp'/(JJT + eye(length(JJT))*(lambda1*max(S)));
+end
+    
+    % Average trials (the fourth dimension of the ytrial matrix)
+    dodAvg(:,:,iS) = mean(ytrial(:,:,1:nTrial),3);
+    % Correct for the baseline
+    for ii = 1:size(dodAvg,2) % for each channel (but you can do it directly without the for cycle)
+        foom = mean(dodAvg(1:-sRange(1),ii,iS),1); % compute baseline as average of the signal in the -2:0 seconds time range
+        dodAvg(:,ii,iS) = dodAvg(:,ii,iS) - foom; % subtract the baseline from the average hemodynamic responses
+    end
+
+% Data to reconstruct are optical density changes compared to a baseline.
+% In our case the baseline is 0, therefore we want to reconstruct 0-our
+% data
+datarecon = -dodAvg;
+
+% Inizialize matrices and load useful stuff
+nNodeVol = size(HeadVolumeMesh.node,1);  %The node count of the volume mesh
+nNodeGM = size(GMSurfaceMesh.node,1); %The node count of the GM mesh
+nFrames = size(datarecon,1); % Number of samples to reconstruct
+wavelengths = SD.Lambda; % wavelengths of the system
+nWavs = length(SD.Lambda); % n of wavelengths
+nCond = size(s,2); % number of condition
+
+% Initialize final results matrices
+hbo.vol = zeros(nFrames,nNodeVol,nCond);
+hbr.vol = zeros(nFrames,nNodeVol,nCond);
+hbo.gm = zeros(nFrames,nNodeGM,nCond);
+hbr.gm = zeros(nFrames,nNodeGM,nCond);
+
+% Obtain specific absorption coefficients
+Eall = [];
+for i = 1:nWavs
+    Etmp = GetExtinctions(wavelengths(i));
+    Etmp = Etmp(1:2); %HbO and HbR only
+    Eall = [Eall; Etmp./1e7]; %This will be nWavs x 2;
+end
+
+% For each condition, perform reconstruction
+for cond = 1:nCond
+    
+    % For each frame
+    for frame = 1:nFrames
+        
+        % Reconstruct absorption changes
+        muaImageAll = zeros(nWavs,nNodeVol);
+        for wav = 1:nWavs
+            dataTmp = squeeze(datarecon(frame,SD.MeasList(:,4)==wav & SD.MeasListAct==1,cond));
+            invJtmp = invJ{wav};
+            tmp = invJtmp * dataTmp';
+            muaImageAll(wav,:) = tmp; %This will be nWavs * nNode
+        end
+        
+        % Convert to concentration changes
+        hbo_tmpVol = (Eall(2,2)*muaImageAll(1,:) - Eall(1,2)*muaImageAll(2,:))/(Eall(1,1)*Eall(2,2)-Eall(1,2)*Eall(2,1));
+        hbr_tmpVol = (muaImageAll(2,:)-Eall(1,2)*hbo_tmpVol)/Eall(2,2);        
+        
+        % Map to GM surface mesh
+        hbo_tmpGM = (vol2gm*hbo_tmpVol');
+        hbr_tmpGM = (vol2gm*hbr_tmpVol');
+        
+        % Book-keeping and saving
+        hbo.vol(frame,:,cond) = hbo_tmpVol;
+        hbr.vol(frame,:,cond) = hbr_tmpVol;
+        hbo.gm(frame,:,cond) = hbo_tmpGM;
+        hbr.gm(frame,:,cond) = hbr_tmpGM;
+        
+    end
+end
+
+% Plot reconstructed images at different time points for each condition
+tRecon = [0 10 15 20]; % time point 0 10  15  and 20 seconds
+baseline = abs(tRange(1)); % two seconds of baseline
+sRecon = fix(tRecon*fs)+fix(baseline*fs); % Convert to samples
+load greyJet % load colormap to make better images
+for iCond = 1:nCond
+    for iT = 1:length(sRecon)
+        % Assign image to fourth column of node
+        GMSurfaceMesh.node(:,4) = hbo.gm(sRecon(iT),:,iCond);
+        figure;
+        plotmesh(GMSurfaceMesh.node,GMSurfaceMesh.face)
+        caxis([-0.05 0.05]) % Set the limit of the colorbar
+        view([0 90]) % Set the view angle
+        title(['HbO cond ' num2str(iCond) ' t = ' num2str(tRecon(iT)) ' s'])
+        colormap(greyJet) % set the loaded colormap
+        hb = colorbar;
+        hb.Label.String = {'\DeltaHbO [\muM]'}; % assign label to colorbar
+        axis off % remove axis
+        
+        GMSurfaceMesh.node(:,4) = hbr.gm(sRecon(iT),:,iCond);
+        figure;
+        plotmesh(GMSurfaceMesh.node,GMSurfaceMesh.face)
+        view([0 90])
+        caxis([-0.05 0.05])
+        title(['HbR cond ' num2str(iCond) ' t = ' num2str(tRecon(iT)) ' s'])
+        colormap(greyJet)
+        hb = colorbar;
+        hb.Label.String = {'\DeltaHbR [\muM]'};
+        axis off
+    end
+end
+
+
+
+
