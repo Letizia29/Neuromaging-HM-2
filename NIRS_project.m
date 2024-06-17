@@ -19,10 +19,13 @@ path_folder = pwd;
 
 %% Utils
 
+addpath(genpath(pwd))
+% Utils_path = ''; % insert your Utils path
+% addpath(genpath(Utils_path))
 
 %% Setting folders
 
-%create the results folder
+% create the results folder
 output_file_prefx = fullfile(path_folder,'Results');
 
 if not(exist(output_file_prefx, 'dir'))
@@ -30,7 +33,7 @@ if not(exist(output_file_prefx, 'dir'))
 end
 
 
-%% Plot the 3D configuration (sources, detectors, channels)
+%% 1. Plot the 3D configuration (sources, detectors, channels)
 
 load ('CCW1.nirs','-mat');  
 nCh = size(SD.MeasList,1)/2; % number of channels (one for each wavelength)
@@ -47,7 +50,7 @@ end
 title('3D array configuration')
 legend('Source', 'Detector')
 
-%% Compute the source-detector distance for each channel and plot all distances with a histogram
+%% 2. Compute the source-detector distance for each channel and plot all distances with a histogram
 
 distCh = zeros(nCh,1);
 for iCh = 1:nCh
@@ -60,8 +63,9 @@ figure;
 histogram(distCh,20)   
 xlabel('SD distance [mm]')
 ylabel('N of channels')
+title('Source-detector distances')
 
-%% Identify 'bad' channels as those channels with signal-to-noise ratio(SNR) lower than 20.
+%% 3. Identify 'bad' channels as those channels with signal-to-noise ratio(SNR) lower than 20.
 
 % The output of this step should be a column vector with 0 for channels to be removed and 1 
 % for channels to be kept. This vector should be placed in the SD.MeasListAct field.
@@ -123,9 +127,6 @@ end
 title('3D array configuration (good bros only)')
 legend('Source', 'Detector')
 
-
-
-
 %% Check the distances now (NOT IN THE ASSIGNMENT)
 
 distCh_tmp = zeros(nCh,1);
@@ -143,15 +144,14 @@ histogram(distCh_tmp)
 xlabel('SD distance [mm]')
 ylabel('N of channels')
 
-%% PREPROCESSING
+%% 4. PREPROCESSING
 % a. Conversion to optical density changes
 
 meanValue = mean(d);
 dodConv = -log(abs(d)./meanValue);
 
-% b. Motion correction
-
-% CHOOSE THE BEST MOTION CORRECTION TECHNIQUE (5)
+% b. Motion correction:
+%% 5. CHOOSE THE BEST MOTION CORRECTION TECHNIQUE
 % Number of channels available
 nCh = size(SD.MeasList,1)/2;
 
@@ -166,8 +166,10 @@ title('Wavelength 1')
 %% Wavelet motion correction--> there are artifacts but without changes of the baseline
 SD.MeasListAct = remCh;
 iqr = 0.5;
-% Run wavelet motion correction
+% Run wavelet motion correction - necessary only in the first run
 dodWavelet = hmrMotionCorrectWavelet(dodConv,SD,iqr);
+save("dodWavelet.mat", "dodWavelet")
+% load('dodWavelet.mat')
 
 % Plot original optical density data at first wavelength considering only good channels
 dodConvGood = dodConv(:,remCh==1);
@@ -197,11 +199,13 @@ for iCh = 1:nCh
         title(num2str(iCh))
         legend('dod','dod Wavelet corrected')
         xlim([t(1) t(end)])
-        pause
+        pause(0.5)
         close
     end
 end
-%% c. Band-pass filtering with cut-off frequency 0.01 and 0.5 Hz-->noise
+
+%%
+% c. Band-pass filtering with cut-off frequency 0.01 and 0.5 Hz-->noise
 % removal
 
 lowerCutOff = 0.01;
@@ -221,16 +225,86 @@ xlim([t(1) t(end)])
 title('Wavelength 1')
 legend('original','band-pass filtered')
 
-%% d. Computation of the average optical density hemodynamic response for each channel
-%and condition in a time range of -2 to 36 seconds from stimulus onset with the block
-%average approach
+%% Convert to concentration changes
+% Compute DPF
+alpha = 223.3;
+beta = 0.05624;
+gamma = 0.8493;
+delta = -5.723*10^(-7);
+epsilon = 0.001245;
+csi = -0.9025;
 
+lambda = SD.Lambda; % to get the wavelengths from your probe information
+age = 28; % Age of the participant
 
-tRange = [-2 36]; % range of timimg around stimulus to define a trial
-tHRF = tRange(1):1/fs:tRange(2); % time vector for the hemodynamic response (and trials)
+DPF = zeros(1,length(lambda));
+% for iL = 1:length(lambda)
+%     DPF(1,iL) = alpha + beta * age^gamma + delta * lambda(iL)^3 + epsilon * lambda(iL)^2 + csi * lambda(iL);
+% end
+%or
+DPF = alpha + beta * age^gamma + delta * lambda.^3 + epsilon * lambda.^2 + csi * lambda;
 
-dcAvg = zeros(length(tHRF),size(dc,2),size(dc,3),size(s,2));
-%% Test all motion correction approaches on the data and establish whether your choice based on 
+% Convert to concentration changes
+dc = hmrOD2Conc(dodFilt,SD,DPF);
+
+% Plot concentration changes data for the HbO chromophore for all good channels
+figure;
+plot(t,squeeze(dc(:,1,remCh(1:nCh)==1))) % squeeze can be used to remove the dimension from the matrix that we have selected and therefore set to 1, to make again the matrix 2D
+xlabel('Time [s]')
+ylabel('Concentration changes [M]')
+xlim([t(1) t(end)])
+title('HbO')
+
+%%
+% d. Computation of the average optical density hemodynamic response for each channel
+% and condition in a time range of -2 to 36 seconds from stimulus onset with the block
+% average approach
+
+tRange = [-2 36]; % range of timing around stimulus to define a trial
+sRange = fix(tRange*fs); % convert the time in seconds to samples
+tHRF = tRange(1):1/fs:tRange(2)-1/fs; % time vector for the hemodynamic response (and trials)
+dcAvg = zeros(length(tHRF),size(dc,2),size(dc,3),size(s,2)); % initialize the matrix that will contain our average hemodynamic response for each chromophore, channel and condition
+for iS = 1:size(s,2) % for each condition
+    % Get the timing of stimulus presentation for that condition
+    stimulusTiming = find(s(:,iS)==1); 
+    % Initialize the matrix that will contain the single trial responses
+    % for that condition for all chromophores and channels
+    ytrial = zeros(length(tHRF),size(dc,2),size(dc,3),length(stimulusTiming));
+    
+    nTrial = 0;
+    for iT = 1:length(stimulusTiming) % for each stimulus presented (for eacht trial)
+        if (stimulusTiming(iT)+sRange(1))>=1 && (stimulusTiming(iT)+sRange(2))<=size(dc,1) % Check that there are enough data pre and post stimulus (this is useful to check that the first stimulus is presented at least 2 seconds after the start of the acquisition and that the last stimulus has at least 36 seconds of data afterwards)
+            nTrial = nTrial + 1;
+            ytrial(:,:,:,nTrial) = dc(stimulusTiming(iT)+[sRange(1):sRange(2)],:,:); % extract the trial from the dc data
+        end
+    end
+    
+    % Average trials (the fourth dimension of the ytrial matrix)
+    dcAvg(:,:,:,iS) = mean(ytrial(:,:,:,1:nTrial),4);
+    % Correct for the baseline
+    for ii = 1:size(dcAvg,3) % for each channel 
+        foom = mean(dcAvg(1:-sRange(1),:,ii,iS),1); % compute baseline as average of the signal in the -2:0 seconds time range
+        dcAvg(:,:,ii,iS) = dcAvg(:,:,ii,iS) - foom; % subtract the baseline from the average hemodynamic responses
+    end
+end
+
+% Plot the average hemodynamic response for HbO and HbR at the selected channels
+% for iCh = 1:length(nCh)
+%     figure;
+%     plot(tHRF,squeeze(dcAvg(:,1,chSel(iCh),1)),'r','LineWidth',2)
+%     hold on;
+%     plot(tHRF,squeeze(dcAvg(:,1,chSel(iCh),2)),'b','LineWidth',2)
+%     plot(tHRF,squeeze(dcAvg(:,2,chSel(iCh),1)),'m--','LineWidth',2)
+%     plot(tHRF,squeeze(dcAvg(:,2,chSel(iCh),2)),'c--','LineWidth',2)
+%     legend('HbO right hand','HbO left hand','HbO feet','HbR right hand','HbR left hand','HbR feet')
+%     title(num2str(chSel(iCh)))
+%     xlabel('Time [s]')
+%     ylabel('\DeltaHb [M]')
+%     xlim([tHRF(1) tHRF(end)])
+%     ylim([-1e-7 2e-7]) % Limit the y axis so that all plots have the same axis limits and can be compared
+% end
+
+%% 6. Test all motion correction approaches on the data and establish whether your choice based on 
 % theory (the one at point 5) did provide good qualitative results.
 %% Spline motion correction
 % Detect motion artifacts in signal
@@ -384,7 +458,6 @@ end
 
 %% Part 7
 % Load Jacobian
-
 
 load('CCW.jac','-mat')
 HeadVolumeMesh.node(:,4) = (sum(J{1}.vol));
