@@ -27,54 +27,66 @@ end
 
 %% 1. Plot the 3D configuration (sources, detectors, channels)
 
-load ('CCW1.nirs','-mat');  
-nCh = size(SD.MeasList,1)/2; %number of channels
+load ('CCW1.nirs','-mat');
+nCh = size(SD.MeasList,1)/2;    % number of channels (one for each wavelength)
+
+distCh = zeros(nCh,1);          % Needed in point 2.
 
 figure(1)
-plot3(SD.SrcPos(:,1),SD.SrcPos(:,2),SD.SrcPos(:,3),'.r','MarkerSize',10) %sources x, y, z coordinates
+plot3(SD.SrcPos(:,1),SD.SrcPos(:,2),SD.SrcPos(:,3),'.r','MarkerSize',10) % sources x, y, z coordinates
 hold on;
-plot3(SD.DetPos(:,1),SD.DetPos(:,2),SD.DetPos(:,3),'.b','MarkerSize',10) %detectors x, y, z coordinates
+plot3(SD.DetPos(:,1),SD.DetPos(:,2),SD.DetPos(:,3),'.b','MarkerSize',10) % detectors x, y, z coordinates
 for iCh = 1:nCh
-    src = SD.SrcPos(SD.MeasList(iCh,1),:);  
+    src = SD.SrcPos(SD.MeasList(iCh,1),:); % specific channel
     det = SD.DetPos(SD.MeasList(iCh,2),:);
-    plot3([src(1) det(1)],[src(2) det(2)],[src(3) det(3)],'g')  
+
+    plot3([src(1) det(1)],[src(2) det(2)],[src(3) det(3)],'g')          % x y z of starting point and ending point
+
+    distCh(iCh) = sqrt(sum((src-det).^2));                              % Compute the distance between sources and detectors
 end
-title('3D array configuration')
-legend('Source', 'Detector','Channel')
+%axis off
+title('Initial 3D array configuration')
+legend('Source', 'Detector', 'Channel')
 
-%% 2. Source-detector distance for each channel and histogram
+%% 2. Plot the source-detector distances with a histogram
 
-distCh = zeros(nCh,1);
-for iCh = 1:nCh
-    src = SD.SrcPos(SD.MeasList(iCh,1),:);
-    det = SD.DetPos(SD.MeasList(iCh,2),:);
-    distCh(iCh) = sqrt(sum((src-det).^2));
-end
+nbins = 20;     % number of histogram bins chosen empirically
 
-figure(2);
-histogram(distCh,20)   
+figure(2)
+histogram(distCh, nbins)
 xlabel('SD distance [mm]')
 ylabel('N of channels')
 title('Source-detector distances')
 
-%% 3. Identify 'bad' channels
+%% 3. Identify 'bad' channels as those channels with signal-to-noise ratio(SNR) lower than 20.
 
-dRange = 0;
+% The output of this step should be a column vector with 0 for channels to be removed and 1
+% for channels to be kept. This vector should be placed in the SD.MeasListAct field.
+
+
+% NB: the function was changed again :(
+% We did it to accept dRange as an optional input, we uploaded the function in the git
+% This way is more elegant. Let's see if we want to keep it or remove the
+% dRange parameter before the upload
+
+% We also tried to use the range of the lab to check the differences
+
+% dRange = [0.001 2.5];
 
 SNRrange = 20;
-remCh = removeNoisyChannels(d,dRange,SNRrange);
+remCh = removeNoisyChannels(d, SNRrange);
 
 SD.MeasListAct = remCh;
 
 %% (3.) Plot the 3D array highlighting the bad channels with a different color
 
-figure(3);
+figure(3)
 plot3(SD.SrcPos(:,1),SD.SrcPos(:,2),SD.SrcPos(:,3),'.r','MarkerSize',10)
 hold on;
 plot3(SD.DetPos(:,1),SD.DetPos(:,2),SD.DetPos(:,3),'.b','MarkerSize',10)
 for iCh = 1:nCh
-        src = SD.SrcPos(SD.MeasList(iCh,1),:);
-        det = SD.DetPos(SD.MeasList(iCh,2),:);
+    src = SD.SrcPos(SD.MeasList(iCh,1),:);
+    det = SD.DetPos(SD.MeasList(iCh,2),:);
     if remCh(iCh) == 1
         plot3([src(1) det(1)],[src(2) det(2)],[src(3) det(3)],'g')
     else
@@ -82,11 +94,18 @@ for iCh = 1:nCh
     end
 end
 title('3D array configuration')
-legend('Source', 'Detector', 'Good channel', '', 'Bad channel')
+legend('Source', 'Detector','Location', 'eastoutside')
+
+cols =  ["green", "yellow"];
+col_names = ["Good channel", "Bad channel"];
+for j =1:length(col_names)
+    plot([NaN NaN], [NaN NaN], 'Color', cols(j), 'DisplayName', col_names(j))   % Set colors for good/bad channels in the legend
+end
+
 
 %% (3.) Plot the 3D array keeping in the plot only the good channels
 
-figure(4);
+figure(4)
 plot3(SD.SrcPos(:,1),SD.SrcPos(:,2),SD.SrcPos(:,3),'.r','MarkerSize',10)
 hold on;
 plot3(SD.DetPos(:,1),SD.DetPos(:,2),SD.DetPos(:,3),'.b','MarkerSize',10)
@@ -97,8 +116,12 @@ for iCh = 1:nCh
         plot3([src(1) det(1)],[src(2) det(2)],[src(3) det(3)],'g')
     end
 end
-title('3D array configuration (good bros only)')
+title('3D array configuration (good quality channels)')
 legend('Source', 'Detector')
+
+num_good_chn = sum(remCh)/2;    % Count good quality channels / number of wavelengths
+
+disp(['The number of good quality channels is ', num2str(num_good_chn)]);
 
 %% Check the distances now 
 
@@ -108,12 +131,14 @@ for iCh = 1:nCh
     if remCh(iCh) == 1
         src = SD.SrcPos(SD.MeasList(iCh,1),:);
         det = SD.DetPos(SD.MeasList(iCh,2),:);
-        distCh_tmp(iCh) = sqrt(sum((src-det).^2));    
+        distCh_tmp(iCh) = sqrt(sum((src-det).^2));
     end
 end
 
-figure(5);
-histogram(distCh_tmp(distCh_tmp>0),20)
+nbins_new = 17;
+
+figure(5)
+histogram(distCh_tmp(distCh_tmp > 0), 'NumBins', nbins_new)
 xlabel('SD distance [mm]')
 ylabel('N of channels')
 
