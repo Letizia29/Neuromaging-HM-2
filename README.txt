@@ -1,4 +1,4 @@
-HOMEWORK 2 - Imaging for neuroscience A.A. 2023-2024
+# HOMEWORK 2 - Imaging for neuroscience A.A. 2023-2024 - Università degli Studi di Padova
 
 GROUP 4 
 Coppée Aurélien:             2128487      aurelienmichaelm.coppee@studenti.unipd.it    
